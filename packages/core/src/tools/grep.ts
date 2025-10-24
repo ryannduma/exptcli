@@ -4,25 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import fs from 'fs';
-import fsPromises from 'fs/promises';
-import path from 'path';
-import { EOL } from 'os';
-import { spawn } from 'child_process';
+import type { MessageBus } from '../confirmation-bus/message-bus.js';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import path from 'node:path';
+import { EOL } from 'node:os';
+import { spawn } from 'node:child_process';
 import { globStream } from 'glob';
-import {
-  BaseDeclarativeTool,
-  BaseToolInvocation,
-  Icon,
-  ToolInvocation,
-  ToolResult,
-} from './tools.js';
-import { Type } from '@google/genai';
-import { SchemaValidator } from '../utils/schemaValidator.js';
+import type { ToolInvocation, ToolResult } from './tools.js';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
 import { makeRelative, shortenPath } from '../utils/paths.js';
 import { getErrorMessage, isNodeError } from '../utils/errors.js';
 import { isGitRepository } from '../utils/gitUtils.js';
-import { Config } from '../config/config.js';
+import type { Config } from '../config/config.js';
+import type { FileExclusions } from '../utils/ignorePatterns.js';
+import { ToolErrorType } from './tool-error.js';
+import { GREP_TOOL_NAME } from './tool-names.js';
+import { debugLogger } from '../utils/debugLogger.js';
 
 // --- Interfaces ---
 
@@ -59,11 +57,17 @@ class GrepToolInvocation extends BaseToolInvocation<
   GrepToolParams,
   ToolResult
 > {
+  private readonly fileExclusions: FileExclusions;
+
   constructor(
     private readonly config: Config,
     params: GrepToolParams,
+    messageBus?: MessageBus,
+    _toolName?: string,
+    _toolDisplayName?: string,
   ) {
-    super(params);
+    super(params, messageBus, _toolName, _toolDisplayName);
+    this.fileExclusions = config.getFileExclusions();
   }
 
   /**
@@ -200,6 +204,10 @@ class GrepToolInvocation extends BaseToolInvocation<
       return {
         llmContent: `Error during grep search operation: ${errorMessage}`,
         returnDisplay: `Error: ${errorMessage}`,
+        error: {
+          message: errorMessage,
+          type: ToolErrorType.GREP_EXECUTION_ERROR,
+        },
       };
     }
   }
@@ -217,10 +225,16 @@ class GrepToolInvocation extends BaseToolInvocation<
       try {
         const child = spawn(checkCommand, checkArgs, {
           stdio: 'ignore',
-          shell: process.platform === 'win32',
+          shell: true,
         });
         child.on('close', (code) => resolve(code === 0));
-        child.on('error', () => resolve(false));
+        child.on('error', (err) => {
+          debugLogger.debug(
+            `[GrepTool] Failed to start process for '${command}':`,
+            err.message,
+          );
+          resolve(false);
+        });
       } catch {
         resolve(false);
       }
@@ -278,7 +292,6 @@ class GrepToolInvocation extends BaseToolInvocation<
 
   /**
    * Gets a description of the grep operation
-   * @param params Parameters for the grep operation
    * @returns A string describing the grep
    */
   getDescription(): string {
@@ -375,7 +388,7 @@ class GrepToolInvocation extends BaseToolInvocation<
           });
           return this.parseGrepOutput(output, absolutePath);
         } catch (gitError: unknown) {
-          console.debug(
+          debugLogger.debug(
             `GrepLogic: git grep failed: ${getErrorMessage(
               gitError,
             )}. Falling back...`,
@@ -384,11 +397,35 @@ class GrepToolInvocation extends BaseToolInvocation<
       }
 
       // --- Strategy 2: System grep ---
+      debugLogger.debug(
+        'GrepLogic: System grep is being considered as fallback strategy.',
+      );
+
       const grepAvailable = await this.isCommandAvailable('grep');
       if (grepAvailable) {
         strategyUsed = 'system grep';
-        const grepArgs = ['-r', '-n', '-H', '-E'];
-        const commonExcludes = ['.git', 'node_modules', 'bower_components'];
+        const grepArgs = ['-r', '-n', '-H', '-E', '-I'];
+        // Extract directory names from exclusion patterns for grep --exclude-dir
+        const globExcludes = this.fileExclusions.getGlobExcludes();
+        const commonExcludes = globExcludes
+          .map((pattern) => {
+            let dir = pattern;
+            if (dir.startsWith('**/')) {
+              dir = dir.substring(3);
+            }
+            if (dir.endsWith('/**')) {
+              dir = dir.slice(0, -3);
+            } else if (dir.endsWith('/')) {
+              dir = dir.slice(0, -1);
+            }
+
+            // Only consider patterns that are likely directories. This filters out file patterns.
+            if (dir && !dir.includes('/') && !dir.includes('*')) {
+              return dir;
+            }
+            return null;
+          })
+          .filter((dir): dir is string => !!dir);
         commonExcludes.forEach((dir) => grepArgs.push(`--exclude-dir=${dir}`));
         if (include) {
           grepArgs.push(`--include=${include}`);
@@ -457,7 +494,7 @@ class GrepToolInvocation extends BaseToolInvocation<
           });
           return this.parseGrepOutput(output, absolutePath);
         } catch (grepError: unknown) {
-          console.debug(
+          debugLogger.debug(
             `GrepLogic: System grep failed: ${getErrorMessage(
               grepError,
             )}. Falling back...`,
@@ -466,18 +503,12 @@ class GrepToolInvocation extends BaseToolInvocation<
       }
 
       // --- Strategy 3: Pure JavaScript Fallback ---
-      console.debug(
+      debugLogger.debug(
         'GrepLogic: Falling back to JavaScript grep implementation.',
       );
       strategyUsed = 'javascript fallback';
       const globPattern = include ? include : '**/*';
-      const ignorePatterns = [
-        '.git/**',
-        'node_modules/**',
-        'bower_components/**',
-        '.svn/**',
-        '.hg/**',
-      ]; // Use glob patterns for ignores here
+      const ignorePatterns = this.fileExclusions.getGlobExcludes();
 
       const filesStream = globStream(globPattern, {
         cwd: absolutePath,
@@ -510,7 +541,7 @@ class GrepToolInvocation extends BaseToolInvocation<
         } catch (readError: unknown) {
           // Ignore errors like permission denied or file gone during read
           if (!isNodeError(readError) || readError.code !== 'ENOENT') {
-            console.debug(
+            debugLogger.debug(
               `GrepLogic: Could not read/process ${fileAbsolutePath}: ${getErrorMessage(
                 readError,
               )}`,
@@ -537,35 +568,40 @@ class GrepToolInvocation extends BaseToolInvocation<
  * Implementation of the Grep tool logic (moved from CLI)
  */
 export class GrepTool extends BaseDeclarativeTool<GrepToolParams, ToolResult> {
-  static readonly Name = 'search_file_content'; // Keep static name
-
-  constructor(private readonly config: Config) {
+  static readonly Name = GREP_TOOL_NAME;
+  constructor(
+    private readonly config: Config,
+    messageBus?: MessageBus,
+  ) {
     super(
       GrepTool.Name,
       'SearchText',
       'Searches for a regular expression pattern within the content of files in a specified directory (or current working directory). Can filter files by a glob pattern. Returns the lines containing matches, along with their file paths and line numbers.',
-      Icon.Regex,
+      Kind.Search,
       {
         properties: {
           pattern: {
             description:
               "The regular expression (regex) pattern to search for within file contents (e.g., 'function\\s+myFunction', 'import\\s+\\{.*\\}\\s+from\\s+.*').",
-            type: Type.STRING,
+            type: 'string',
           },
           path: {
             description:
               'Optional: The absolute path to the directory to search within. If omitted, searches the current working directory.',
-            type: Type.STRING,
+            type: 'string',
           },
           include: {
             description:
               "Optional: A glob pattern to filter which files are searched (e.g., '*.js', '*.{ts,tsx}', 'src/**'). If omitted, searches all files (respecting potential global ignores).",
-            type: Type.STRING,
+            type: 'string',
           },
         },
         required: ['pattern'],
-        type: Type.OBJECT,
+        type: 'object',
       },
+      true,
+      false,
+      messageBus,
     );
   }
 
@@ -615,12 +651,9 @@ export class GrepTool extends BaseDeclarativeTool<GrepToolParams, ToolResult> {
    * @param params Parameters to validate
    * @returns An error message string if invalid, null otherwise
    */
-  validateToolParams(params: GrepToolParams): string | null {
-    const errors = SchemaValidator.validate(this.schema.parameters, params);
-    if (errors) {
-      return errors;
-    }
-
+  protected override validateToolParamValues(
+    params: GrepToolParams,
+  ): string | null {
     try {
       new RegExp(params.pattern);
     } catch (error) {
@@ -641,7 +674,16 @@ export class GrepTool extends BaseDeclarativeTool<GrepToolParams, ToolResult> {
 
   protected createInvocation(
     params: GrepToolParams,
+    messageBus?: MessageBus,
+    _toolName?: string,
+    _toolDisplayName?: string,
   ): ToolInvocation<GrepToolParams, ToolResult> {
-    return new GrepToolInvocation(this.config, params);
+    return new GrepToolInvocation(
+      this.config,
+      params,
+      messageBus,
+      _toolName,
+      _toolDisplayName,
+    );
   }
 }

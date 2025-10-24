@@ -7,7 +7,7 @@
 // File for 'gemini mcp add' command
 import type { CommandModule } from 'yargs';
 import { loadSettings, SettingScope } from '../../config/settings.js';
-import { MCPServerConfig } from '@google/gemini-cli-core';
+import { debugLogger, type MCPServerConfig } from '@google/gemini-cli-core';
 
 async function addMcpServer(
   name: string,
@@ -36,9 +36,19 @@ async function addMcpServer(
     includeTools,
     excludeTools,
   } = options;
+
+  const settings = loadSettings(process.cwd());
+  const inHome = settings.workspace.path === settings.user.path;
+
+  if (scope === 'project' && inHome) {
+    debugLogger.error(
+      'Error: Please use --scope user to edit settings in the home directory.',
+    );
+    process.exit(1);
+  }
+
   const settingsScope =
     scope === 'user' ? SettingScope.User : SettingScope.Workspace;
-  const settings = loadSettings(process.cwd());
 
   let newServer: Partial<MCPServerConfig> = {};
 
@@ -106,7 +116,7 @@ async function addMcpServer(
 
   const isExistingServer = !!mcpServers[name];
   if (isExistingServer) {
-    console.log(
+    debugLogger.log(
       `MCP server "${name}" is already configured within ${scope} settings.`,
     );
   }
@@ -116,9 +126,9 @@ async function addMcpServer(
   settings.setValue(settingsScope, 'mcpServers', mcpServers);
 
   if (isExistingServer) {
-    console.log(`MCP server "${name}" updated in ${scope} settings.`);
+    debugLogger.log(`MCP server "${name}" updated in ${scope} settings.`);
   } else {
-    console.log(
+    debugLogger.log(
       `MCP server "${name}" added to ${scope} settings. (${transport})`,
     );
   }
@@ -130,6 +140,10 @@ export const addCommand: CommandModule = {
   builder: (yargs) =>
     yargs
       .usage('Usage: gemini mcp add [options] <name> <commandOrUrl> [args...]')
+      .parserConfiguration({
+        'unknown-options-as-args': true, // Pass unknown options as server args
+        'populate--': true, // Populate server args after -- separator
+      })
       .positional('name', {
         describe: 'Name of the server',
         type: 'string',
@@ -159,6 +173,7 @@ export const addCommand: CommandModule = {
         describe: 'Set environment variables (e.g. -e KEY=value)',
         type: 'array',
         string: true,
+        nargs: 1,
       })
       .option('header', {
         alias: 'H',
@@ -166,6 +181,7 @@ export const addCommand: CommandModule = {
           'Set HTTP headers for SSE and HTTP transports (e.g. -H "X-Api-Key: abc123" -H "Authorization: Bearer abc123")',
         type: 'array',
         string: true,
+        nargs: 1,
       })
       .option('timeout', {
         describe: 'Set connection timeout in milliseconds',
@@ -189,22 +205,29 @@ export const addCommand: CommandModule = {
         describe: 'A comma-separated list of tools to exclude',
         type: 'array',
         string: true,
+      })
+      .middleware((argv) => {
+        // Handle -- separator args as server args if present
+        if (argv['--']) {
+          const existingArgs = (argv['args'] as Array<string | number>) || [];
+          argv['args'] = [...existingArgs, ...(argv['--'] as string[])];
+        }
       }),
   handler: async (argv) => {
     await addMcpServer(
-      argv.name as string,
-      argv.commandOrUrl as string,
-      argv.args as Array<string | number>,
+      argv['name'] as string,
+      argv['commandOrUrl'] as string,
+      argv['args'] as Array<string | number>,
       {
-        scope: argv.scope as string,
-        transport: argv.transport as string,
-        env: argv.env as string[],
-        header: argv.header as string[],
-        timeout: argv.timeout as number | undefined,
-        trust: argv.trust as boolean | undefined,
-        description: argv.description as string | undefined,
-        includeTools: argv.includeTools as string[] | undefined,
-        excludeTools: argv.excludeTools as string[] | undefined,
+        scope: argv['scope'] as string,
+        transport: argv['transport'] as string,
+        env: argv['env'] as string[],
+        header: argv['header'] as string[],
+        timeout: argv['timeout'] as number | undefined,
+        trust: argv['trust'] as boolean | undefined,
+        description: argv['description'] as string | undefined,
+        includeTools: argv['includeTools'] as string[] | undefined,
+        excludeTools: argv['excludeTools'] as string[] | undefined,
       },
     );
   },

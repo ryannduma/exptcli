@@ -4,15 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ToolResult } from '../tools/tools.js';
-import {
+import type { ToolResult } from '../tools/tools.js';
+import type {
   Content,
   GenerateContentConfig,
   GenerateContentResponse,
 } from '@google/genai';
-import { GeminiClient } from '../core/client.js';
+import type { GeminiClient } from '../core/client.js';
 import { DEFAULT_GEMINI_FLASH_LITE_MODEL } from '../config/models.js';
 import { getResponseText, partToString } from './partUtils.js';
+import { debugLogger } from './debugLogger.js';
 
 /**
  * A function that summarizes the result of a tool execution.
@@ -90,7 +91,7 @@ export async function summarizeToolOutput(
     )) as unknown as GenerateContentResponse;
     return getResponseText(parsedResponse) || textToSummarize;
   } catch (error) {
-    console.error('Failed to summarize tool output.', error);
+    debugLogger.warn('Failed to summarize tool output.', error);
     return textToSummarize;
   }
 }

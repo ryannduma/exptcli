@@ -6,16 +6,18 @@
 
 import React from 'react';
 import { Text, Box } from 'ink';
-import { Colors } from '../colors.js';
+import { theme } from '../semantic-colors.js';
 import { colorizeCode } from './CodeColorizer.js';
 import { TableRenderer } from './TableRenderer.js';
 import { RenderInline } from './InlineMarkdownRenderer.js';
+import { useSettings } from '../contexts/SettingsContext.js';
 
 interface MarkdownDisplayProps {
   text: string;
   isPending: boolean;
   availableTerminalHeight?: number;
   terminalWidth: number;
+  renderMarkdown?: boolean;
 }
 
 // Constants for Markdown parsing and rendering
@@ -30,10 +32,32 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
   isPending,
   availableTerminalHeight,
   terminalWidth,
+  renderMarkdown = true,
 }) => {
+  const settings = useSettings();
+
   if (!text) return <></>;
 
-  const lines = text.split('\n');
+  // Raw markdown mode - display syntax-highlighted markdown without rendering
+  if (!renderMarkdown) {
+    // Hide line numbers in raw markdown mode as they are confusing due to chunked output
+    const colorizedMarkdown = colorizeCode(
+      text,
+      'markdown',
+      availableTerminalHeight,
+      terminalWidth - CODE_BLOCK_PREFIX_PADDING,
+      undefined,
+      settings,
+      true, // hideLineNumbers
+    );
+    return (
+      <Box paddingLeft={CODE_BLOCK_PREFIX_PADDING} flexDirection="column">
+        {colorizedMarkdown}
+      </Box>
+    );
+  }
+
+  const lines = text.split(/\r?\n/);
   const headerRegex = /^ *(#{1,4}) +(.*)/;
   const codeFenceRegex = /^ *(`{3,}|~{3,}) *(\w*?) *$/;
   const ulItemRegex = /^([ \t]*)([-*+]) +(.*)/;
@@ -172,35 +196,35 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
       switch (level) {
         case 1:
           headerNode = (
-            <Text bold color={Colors.AccentCyan}>
+            <Text bold color={theme.text.link}>
               <RenderInline text={headerText} />
             </Text>
           );
           break;
         case 2:
           headerNode = (
-            <Text bold color={Colors.AccentBlue}>
+            <Text bold color={theme.text.link}>
               <RenderInline text={headerText} />
             </Text>
           );
           break;
         case 3:
           headerNode = (
-            <Text bold>
+            <Text bold color={theme.text.primary}>
               <RenderInline text={headerText} />
             </Text>
           );
           break;
         case 4:
           headerNode = (
-            <Text italic color={Colors.Gray}>
+            <Text italic color={theme.text.secondary}>
               <RenderInline text={headerText} />
             </Text>
           );
           break;
         default:
           headerNode = (
-            <Text>
+            <Text color={theme.text.primary}>
               <RenderInline text={headerText} />
             </Text>
           );
@@ -244,7 +268,7 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
       } else {
         addContentBlock(
           <Box key={key}>
-            <Text wrap="wrap">
+            <Text wrap="wrap" color={theme.text.primary}>
               <RenderInline text={line} />
             </Text>
           </Box>,
@@ -298,6 +322,7 @@ const RenderCodeBlockInternal: React.FC<RenderCodeBlockProps> = ({
   availableTerminalHeight,
   terminalWidth,
 }) => {
+  const settings = useSettings();
   const MIN_LINES_FOR_MESSAGE = 1; // Minimum lines to show before the "generating more" message
   const RESERVED_LINES = 2; // Lines reserved for the message itself and potential padding
 
@@ -312,7 +337,9 @@ const RenderCodeBlockInternal: React.FC<RenderCodeBlockProps> = ({
         // Not enough space to even show the message meaningfully
         return (
           <Box paddingLeft={CODE_BLOCK_PREFIX_PADDING}>
-            <Text color={Colors.Gray}>... code is being written ...</Text>
+            <Text color={theme.text.secondary}>
+              ... code is being written ...
+            </Text>
           </Box>
         );
       }
@@ -322,11 +349,13 @@ const RenderCodeBlockInternal: React.FC<RenderCodeBlockProps> = ({
         lang,
         availableTerminalHeight,
         terminalWidth - CODE_BLOCK_PREFIX_PADDING,
+        undefined,
+        settings,
       );
       return (
         <Box paddingLeft={CODE_BLOCK_PREFIX_PADDING} flexDirection="column">
           {colorizedTruncatedCode}
-          <Text color={Colors.Gray}>... generating more ...</Text>
+          <Text color={theme.text.secondary}>... generating more ...</Text>
         </Box>
       );
     }
@@ -338,6 +367,8 @@ const RenderCodeBlockInternal: React.FC<RenderCodeBlockProps> = ({
     lang,
     availableTerminalHeight,
     terminalWidth - CODE_BLOCK_PREFIX_PADDING,
+    undefined,
+    settings,
   );
 
   return (
@@ -377,10 +408,10 @@ const RenderListItemInternal: React.FC<RenderListItemProps> = ({
       flexDirection="row"
     >
       <Box width={prefixWidth}>
-        <Text>{prefix}</Text>
+        <Text color={theme.text.primary}>{prefix}</Text>
       </Box>
       <Box flexGrow={LIST_ITEM_TEXT_FLEX_GROW}>
-        <Text wrap="wrap">
+        <Text wrap="wrap" color={theme.text.primary}>
           <RenderInline text={itemText} />
         </Text>
       </Box>

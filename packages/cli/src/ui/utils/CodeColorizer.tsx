@@ -15,11 +15,13 @@ import type {
   RootContent,
 } from 'hast';
 import { themeManager } from '../themes/theme-manager.js';
-import { Theme } from '../themes/theme.js';
+import type { Theme } from '../themes/theme.js';
 import {
   MaxSizedBox,
   MINIMUM_MAX_HEIGHT,
 } from '../components/shared/MaxSizedBox.js';
+import type { LoadedSettings } from '../../config/settings.js';
+import { debugLogger } from '@google/gemini-cli-core';
 
 // Configure theming and parsing utilities.
 const lowlight = createLowlight(common);
@@ -30,14 +32,15 @@ function renderHastNode(
   inheritedColor: string | undefined,
 ): React.ReactNode {
   if (node.type === 'text') {
-    // Use the color passed down from parent element, if any
-    return <Text color={inheritedColor}>{node.value}</Text>;
+    // Use the color passed down from parent element, or the theme's default.
+    const color = inheritedColor || theme.defaultColor;
+    return <Text color={color}>{node.value}</Text>;
   }
 
   // Handle Element Nodes: Determine color and pass it down, don't wrap
   if (node.type === 'element') {
     const nodeClasses: string[] =
-      (node.properties?.className as string[]) || [];
+      (node.properties?.['className'] as string[]) || [];
     let elementColor: string | undefined = undefined;
 
     // Find color defined specifically for this element's class
@@ -129,9 +132,14 @@ export function colorizeCode(
   availableHeight?: number,
   maxWidth?: number,
   theme?: Theme,
+  settings?: LoadedSettings,
+  hideLineNumbers?: boolean,
 ): React.ReactNode {
   const codeToHighlight = code.replace(/\n$/, '');
   const activeTheme = theme || themeManager.getActiveTheme();
+  const showLineNumbers = hideLineNumbers
+    ? false
+    : (settings?.merged.ui?.showLineNumbers ?? true);
 
   try {
     // Render the HAST tree using the adapted theme
@@ -167,12 +175,14 @@ export function colorizeCode(
 
           return (
             <Box key={index}>
-              <Text color={activeTheme.colors.Gray}>
-                {`${String(index + 1 + hiddenLinesCount).padStart(
-                  padWidth,
-                  ' ',
-                )} `}
-              </Text>
+              {showLineNumbers && (
+                <Text color={activeTheme.colors.Gray}>
+                  {`${String(index + 1 + hiddenLinesCount).padStart(
+                    padWidth,
+                    ' ',
+                  )} `}
+                </Text>
+              )}
               <Text color={activeTheme.defaultColor} wrap="wrap">
                 {contentToRender}
               </Text>
@@ -182,7 +192,7 @@ export function colorizeCode(
       </MaxSizedBox>
     );
   } catch (error) {
-    console.error(
+    debugLogger.warn(
       `[colorizeCode] Error highlighting code for language "${language}":`,
       error,
     );
@@ -198,9 +208,11 @@ export function colorizeCode(
       >
         {lines.map((line, index) => (
           <Box key={index}>
-            <Text color={activeTheme.defaultColor}>
-              {`${String(index + 1).padStart(padWidth, ' ')} `}
-            </Text>
+            {showLineNumbers && (
+              <Text color={activeTheme.defaultColor}>
+                {`${String(index + 1).padStart(padWidth, ' ')} `}
+              </Text>
+            )}
             <Text color={activeTheme.colors.Gray}>{line}</Text>
           </Box>
         ))}

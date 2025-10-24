@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import updateNotifier, { UpdateInfo } from 'update-notifier';
+import type { UpdateInfo } from 'update-notifier';
+import updateNotifier from 'update-notifier';
 import semver from 'semver';
 import { getPackageJson } from '../../utils/package.js';
+import type { LoadedSettings } from '../../config/settings.js';
+import { debugLogger } from '@google/gemini-cli-core';
 
 export const FETCH_TIMEOUT_MS = 2000;
 
@@ -38,10 +41,15 @@ function getBestAvailableUpdate(
   return semver.gt(stableVer, nightlyVer) ? stable : nightly;
 }
 
-export async function checkForUpdates(): Promise<UpdateObject | null> {
+export async function checkForUpdates(
+  settings: LoadedSettings,
+): Promise<UpdateObject | null> {
   try {
+    if (settings.merged.general?.disableUpdateNag) {
+      return null;
+    }
     // Skip update check when running from source (development mode)
-    if (process.env.DEV === 'true') {
+    if (process.env['DEV'] === 'true') {
       return null;
     }
     const packageJson = await getPackageJson();
@@ -94,7 +102,7 @@ export async function checkForUpdates(): Promise<UpdateObject | null> {
 
     return null;
   } catch (e) {
-    console.warn('Failed to check for updates: ' + e);
+    debugLogger.warn('Failed to check for updates: ' + e);
     return null;
   }
 }

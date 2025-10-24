@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Part } from '@google/genai';
-import { Config } from '../config/config.js';
+import type { Part } from '@google/genai';
+import type { Config } from '../config/config.js';
 import { getFolderStructure } from './getFolderStructure.js';
 
 /**
@@ -62,48 +62,12 @@ export async function getEnvironmentContext(config: Config): Promise<Part[]> {
 
   const context = `
 This is the Gemini CLI. We are setting up the context for our chat.
-Today's date is ${today}.
+Today's date is ${today} (formatted according to the user's locale).
 My operating system is: ${platform}
 ${directoryContext}
         `.trim();
 
   const initialParts: Part[] = [{ text: context }];
-  const toolRegistry = await config.getToolRegistry();
-
-  // Add full file context if the flag is set
-  if (config.getFullContext()) {
-    try {
-      const readManyFilesTool = toolRegistry.getTool('read_many_files');
-      if (readManyFilesTool) {
-        const invocation = readManyFilesTool.build({
-          paths: ['**/*'], // Read everything recursively
-          useDefaultExcludes: true, // Use default excludes
-        });
-
-        // Read all files in the target directory
-        const result = await invocation.execute(AbortSignal.timeout(30000));
-        if (result.llmContent) {
-          initialParts.push({
-            text: `\n--- Full File Context ---\n${result.llmContent}`,
-          });
-        } else {
-          console.warn(
-            'Full context requested, but read_many_files returned no content.',
-          );
-        }
-      } else {
-        console.warn(
-          'Full context requested, but read_many_files tool not found.',
-        );
-      }
-    } catch (error) {
-      // Not using reportError here as it's a startup/config phase, not a chat/generation phase error.
-      console.error('Error reading full file context:', error);
-      initialParts.push({
-        text: '\n--- Error reading full file context ---',
-      });
-    }
-  }
 
   return initialParts;
 }

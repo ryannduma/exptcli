@@ -5,9 +5,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { FileDiscoveryService } from './fileDiscoveryService.js';
 
 describe('FileDiscoveryService', () => {
@@ -133,6 +133,43 @@ describe('FileDiscoveryService', () => {
       const service = new FileDiscoveryService(projectRoot);
 
       expect(service.filterFiles([])).toEqual([]);
+    });
+  });
+
+  describe('filterFilesWithReport', () => {
+    beforeEach(async () => {
+      await fs.mkdir(path.join(projectRoot, '.git'));
+      await createTestFile('.gitignore', 'node_modules/');
+      await createTestFile('.geminiignore', '*.log');
+    });
+
+    it('should return filtered paths and correct ignored count', () => {
+      const files = [
+        'src/index.ts',
+        'node_modules/package/index.js',
+        'debug.log',
+        'README.md',
+      ].map((f) => path.join(projectRoot, f));
+
+      const service = new FileDiscoveryService(projectRoot);
+      const report = service.filterFilesWithReport(files);
+
+      expect(report.filteredPaths).toEqual(
+        ['src/index.ts', 'README.md'].map((f) => path.join(projectRoot, f)),
+      );
+      expect(report.ignoredCount).toBe(2);
+    });
+
+    it('should handle no ignored files', () => {
+      const files = ['src/index.ts', 'README.md'].map((f) =>
+        path.join(projectRoot, f),
+      );
+
+      const service = new FileDiscoveryService(projectRoot);
+      const report = service.filterFilesWithReport(files);
+
+      expect(report.filteredPaths).toEqual(files);
+      expect(report.ignoredCount).toBe(0);
     });
   });
 

@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { execSync } from 'child_process';
-import { ProxyAgent, setGlobalDispatcher } from 'undici';
+import { debugLogger } from '@google/gemini-cli-core';
+import { execSync } from 'node:child_process';
+import { ProxyAgent } from 'undici';
 
 /**
  * Checks if a directory is within a git repository hosted on GitHub.
@@ -24,7 +25,7 @@ export const isGitHubRepository = (): boolean => {
     return pattern.test(remotes);
   } catch (_error) {
     // If any filesystem error occurs, assume not a git repo
-    console.debug(`Failed to get git remote:`, _error);
+    debugLogger.debug(`Failed to get git remote:`, _error);
     return false;
   }
 };
@@ -57,9 +58,6 @@ export const getLatestGitHubRelease = async (
 ): Promise<string> => {
   try {
     const controller = new AbortController();
-    if (proxy) {
-      setGlobalDispatcher(new ProxyAgent(proxy));
-    }
 
     const endpoint = `https://api.github.com/repos/google-github-actions/run-gemini-cli/releases/latest`;
 
@@ -70,8 +68,9 @@ export const getLatestGitHubRelease = async (
         'Content-Type': 'application/json',
         'X-GitHub-Api-Version': '2022-11-28',
       },
-      signal: controller.signal,
-    });
+      dispatcher: proxy ? new ProxyAgent(proxy) : undefined,
+      signal: AbortSignal.any([AbortSignal.timeout(30_000), controller.signal]),
+    } as RequestInit);
 
     if (!response.ok) {
       throw new Error(
@@ -85,7 +84,10 @@ export const getLatestGitHubRelease = async (
     }
     return releaseTag;
   } catch (_error) {
-    console.debug(`Failed to determine latest run-gemini-cli release:`, _error);
+    debugLogger.debug(
+      `Failed to determine latest run-gemini-cli release:`,
+      _error,
+    );
     throw new Error(
       `Unable to determine the latest run-gemini-cli release on GitHub.`,
     );
